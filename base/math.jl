@@ -904,16 +904,31 @@ julia> modf(-3.5)
 """
 modf(x) = isinf(x) ? (flipsign(zero(x), x), x) : (rem(x, one(x)), trunc(x))
 
-function modf(x::Float32)
-    temp = Ref{Float32}()
-    f = ccall((:modff, libm), Float32, (Float32, Ptr{Float32}), x, temp)
-    f, temp[]
-end
-
-function modf(x::Float64)
-    temp = Ref{Float64}()
-    f = ccall((:modf, libm), Float64, (Float64, Ptr{Float64}), x, temp)
-    f, temp[]
+function modf(x::T) where T<:IEEEFloat
+    u = reinterpret(Unsigned, x)
+    # `exponent` but allows non-finite values
+    e = reinterpret(Int, ((u >> significand_bits(T)) & exponent_raw_max(T)) - exponent_max(T) + 1)
+    # No fractional part
+    if e > exponent_bits(T)
+        if e == exponent_max(T) && (u << (exponent_bits(T) + 1)) != 0
+            return (x, x)
+        end
+        u &= sign_mask(T)
+        return (reinterpret(T, u), x)
+    end
+    # No integral part
+    if e < 0
+        u &= sign_mask(T)
+        return (x, reinterpret(T, u))
+    end
+    mask = typemax(u) >> (exponent_bits(T) + 1) >> e
+    if u & mask == 0
+        u &= sign_mask(T)
+        return (reinterpret(T, u), x)
+    end
+    u &= ~mask
+    f = reinterpret(T, u)
+    return (x - f, f)
 end
 
 @inline function ^(x::Float64, y::Float64)
